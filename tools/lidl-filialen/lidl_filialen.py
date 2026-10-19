@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import difflib
 import json
 import re
 import sys
@@ -284,9 +285,11 @@ def address_check(plz, ort, strasse, st: dict) -> str:
     if norm_street(strasse) != norm_street(lidl_street):
         issues.append("Straße")
     # Excel-Ort enthält oft den Stadtteil ("Mannheim-Tattersall"), Lidl nur die Stadt
-    city_x, city_l = norm_city(ort), norm_city(a.get("city"))
-    store_name = norm_city(st.get("storeName"))
-    if not (city_l and (city_l in city_x or city_x in city_l or city_x == store_name)):
+    # und Schreibweisen variieren ("Giengen/Brenz" vs. "Giengen an der Brenz").
+    # Verglichen wird daher nur der erste Namensteil.
+    def first(x):
+        return norm_city(re.split(r"[-/ (,.]", str(x or "").strip())[0])
+    if first(ort) != first(a.get("city")):
         issues.append("Ort")
     return "OK" if not issues else "Abweichung: " + ", ".join(issues)
 
@@ -347,6 +350,22 @@ def to_object_number(filialnr) -> str | None:
     return f"DE{int(digits):05d}" if digits else None
 
 
+def guess_match(plz, strasse, candidates: dict) -> str | None:
+    """Für nicht gefundene Filialen: Lidl-Filiale mit gleicher PLZ und ähnlicher Straße vorschlagen."""
+    plz = str(plz or "").strip().zfill(5)
+    best, best_score = None, 0.0
+    for on, st in candidates.items():
+        a = st.get("address") or {}
+        if str(a.get("zip") or "").zfill(5) != plz:
+            continue
+        score = difflib.SequenceMatcher(None, norm_street(strasse), norm_street(a.get("streetName"))).ratio()
+        if score > best_score:
+            best, best_score = (on, a.get("streetName")), score
+    if best and best_score >= 0.6:
+        return f"{int(best[0][2:])} – {best[1]}"
+    return None
+
+
 def autosize(ws) -> None:
     for col in ws.columns:
         width = max((len(str(c.value)) for c in col if c.value is not None), default=8)
@@ -370,7 +389,7 @@ def cmd_merge(args) -> None:
         sys.exit(f"Spalte 'Filialnummer' nicht gefunden. Vorhandene Spalten: {headers}")
 
     # Bereits vorhandene Lidl-Spalten bei erneutem Lauf überschreiben statt doppelt anhängen
-    template = list(lidl_columns({"_url": ""}, 0, "", "").keys())
+    template = list(lidl_columns({"_url": ""}, 0, "", "").keys()) + ["Möglicher Treffer (Lidl-Nr. – Straße)"]
     first_new = len(headers) + 1
     for name in template:
         if name in headers:
@@ -412,6 +431,19 @@ def cmd_merge(args) -> None:
             if (name == "Adressabgleich" and str(cell.value).startswith("Abweichung")) or \
                (name == "Lidl gefunden" and cell.value == "nein"):
                 cell.fill = WARN_FILL
+
+    # Zweiter Durchlauf: nicht gefundene Zeilen gegen übrige Lidl-Filialen (gleiche PLZ) prüfen
+    unused = {on: st for on, st in stores.items() if on not in used}
+    c_guess = first_new + len(template) - 1
+    stats["davon möglicher Treffer"] = 0
+    for row in ws.iter_rows(min_row=2):
+        if row[c_nr].value is None or ws.cell(row=row[0].row, column=first_new).value != "nein":
+            continue
+        g = guess_match(row[c_plz].value if c_plz is not None else None,
+                        row[c_str].value if c_str is not None else None, unused)
+        if g:
+            ws.cell(row=row[0].row, column=c_guess, value=g).fill = HEADER_FILL
+            stats["davon möglicher Treffer"] += 1
 
     ws.freeze_panes = "B2"
     ws.auto_filter.ref = ws.dimensions

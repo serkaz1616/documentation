@@ -56,6 +56,7 @@ Hauptblatt: die Originalspalten bleiben unverändert, danach kommen:
 | Sonderöffnungszeiten | z. B. `01.11.2026 geschlossen` |
 | Ausstattung | z. B. `eCharger, package, shopNGo` |
 | Vertriebsgesellschaft (Lidl), Lidl URL, Abgerufen am | |
+| Möglicher Treffer | bei nicht gefundenen Filialen: Lidl-Filiale mit gleicher PLZ und ähnlicher Straße (vermutlich umnummeriert) |
 
 Zusatzblätter:
 - **Nur auf lidl.de**: Filialen, die Lidl listet, die aber nicht in der Excel stehen
